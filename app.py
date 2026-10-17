@@ -1,5 +1,9 @@
+import base64
 import html
+import io
+
 import pandas as pd
+from PIL import Image, ImageOps
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -10,6 +14,8 @@ T = {
     "fr": {
         "dir": "ltr",
         "app_title": "Générateur de CV",
+        "photo": "Photo (facultatif)",
+        "photo_help": "Formats JPG ou PNG. La photo est recadrée en carré automatiquement.",
         "full_name": "Nom complet",
         "job": "Titre professionnel",
         "email": "Email",
@@ -37,6 +43,8 @@ T = {
     "ar": {
         "dir": "rtl",
         "app_title": "منشئ السيرة الذاتية",
+        "photo": "الصورة (اختياري)",
+        "photo_help": "صيغة JPG أو PNG. يتم قص الصورة تلقائياً على شكل مربع.",
         "full_name": "الاسم الكامل",
         "job": "المسمى الوظيفي",
         "email": "البريد الإلكتروني",
@@ -80,6 +88,23 @@ def lines(text: str):
     return [l.strip() for l in (text or "").splitlines() if l.strip()]
 
 
+def process_photo(uploaded) -> str:
+    """Recadre en carré, redimensionne, compresse et renvoie une image intégrable (data URI).
+    La photo reste en mémoire : rien n'est enregistré sur le serveur."""
+    if uploaded is None:
+        return ""
+    try:
+        img = Image.open(uploaded)
+        img = ImageOps.exif_transpose(img)  # corrige l'orientation des photos de téléphone
+        img = img.convert("RGB")
+        img = ImageOps.fit(img, (400, 400), method=Image.LANCZOS, centering=(0.5, 0.4))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+    except Exception:
+        return ""
+
+
 def build_html(t: dict, d: dict) -> str:
     contact = " &bull; ".join(
         esc(x) for x in (d["email"], d["phone"], d["city"]) if x and x.strip()
@@ -120,6 +145,9 @@ def build_html(t: dict, d: dict) -> str:
   .job {{ font-size: 13pt; color: #555; margin-top: 2px; }}
   .contact {{ margin-top: 6px; color: #444; font-size: 10pt; }}
   header {{ border-bottom: 3px solid #1f3a5f; padding-bottom: 10px; margin-bottom: 8px; }}
+  .head {{ display: flex; align-items: center; gap: 18px; }}
+  .photo {{ width: 32mm; height: 32mm; border-radius: 50%; object-fit: cover;
+           border: 2px solid #1f3a5f; flex-shrink: 0; }}
   h2 {{ font-size: 12pt; text-transform: uppercase; letter-spacing: 1px; color: #1f3a5f;
        border-bottom: 1px solid #ccc; padding-bottom: 3px; margin: 16px 0 8px; }}
   .item {{ margin-bottom: 10px; page-break-inside: avoid; }}
@@ -131,9 +159,14 @@ def build_html(t: dict, d: dict) -> str:
 </head>
 <body>
   <header>
-    <h1>{esc(d['name'])}</h1>
-    <div class="job">{esc(d['job'])}</div>
-    <div class="contact">{contact}</div>
+    <div class="head">
+      {f'<img class="photo" src="{d["photo"]}" alt="">' if d['photo'] else ''}
+      <div>
+        <h1>{esc(d['name'])}</h1>
+        <div class="job">{esc(d['job'])}</div>
+        <div class="contact">{contact}</div>
+      </div>
+    </div>
   </header>
   {section({'fr': 'Profil', 'ar': 'نبذة'}[d['lang']], f"<p>{esc(d['summary'])}</p>" if d['summary'].strip() else "")}
   {section(t['experience'], exp_html)}
@@ -158,6 +191,13 @@ st.title(f"📄 {t['app_title']}")
 left, right = st.columns([1, 1], gap="large")
 
 with left:
+    uploaded_photo = st.file_uploader(
+        t["photo"], type=["jpg", "jpeg", "png"], help=t["photo_help"]
+    )
+    photo = process_photo(uploaded_photo)
+    if photo:
+        st.image(photo, width=120)
+
     name = st.text_input(t["full_name"])
     job = st.text_input(t["job"])
     c1, c2, c3 = st.columns(3)
@@ -198,6 +238,7 @@ with left:
 
 data = {
     "lang": lang,
+    "photo": photo,
     "name": name, "job": job, "email": email, "phone": phone, "city": city,
     "summary": summary, "experiences": experiences, "education": education,
     "skills": skills, "languages": languages,
